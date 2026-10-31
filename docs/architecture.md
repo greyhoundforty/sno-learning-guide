@@ -19,31 +19,69 @@ The guide is always served over HTTP by a `mise` task. It is never opened as `fi
 | `GUIDE_PORT` | 8080 | Guide static server |
 | `VERIFIER_PORT` | 8081 | Verifier API |
 
-Port 8000 is taken by the factory dashboard, so it is not used. The `mise` tasks export both variables and the guide reads the verifier port from a config value injected at serve time.
+Port 8000 is taken by the factory dashboard, so it is not used. The `mise` tasks export both variables and inject the verifier port into the guide at serve time.
 
 ## Guide to verifier flow
 
-1. The learner finishes a step and clicks **I did it**.
-2. If the step has `check_type: manual`, the guide marks it done client-side. It does not call the API.
-3. Otherwise the guide sends `POST http://localhost:<VERIFIER_PORT>/api/verify/<step-id>`.
-4. The verifier looks up the step, validates its `expected` map against the schema, runs the matching check, and returns:
+1. The learner clicks **I did it**.
+2. A `manual` step is marked done client-side. No API call.
+3. Otherwise the guide sends `POST http://127.0.0.1:<VERIFIER_PORT>/api/verify/<lab-id>/<step-id>`.
+4. The verifier loads the step from the lab YAML (the single source of truth, also embedded in the guide by the serve task), validates `expected`, runs the check, and returns the [response](../labs/schema.md#response).
+5. The guide updates the step card and SVG node, then opens the next step and scrolls to it.
 
-```json
-{ "pass": true, "hint": "" }
-```
+This matches the click-to-complete pattern of the reference guide. Checks are read-only, so retrying is safe.
 
-5. On `pass: true` the step card turns complete and the matching SVG node changes state. On `pass: false` the card stays open and shows `hint`.
-6. Progress (completed step ids) is persisted in the browser's `localStorage`, so a reload keeps state.
+### Step states
 
-This matches the click-to-complete pattern of the reference guide.
+| State | Meaning | Persisted |
+| --- | --- | --- |
+| `locked` | A `requires` step is not `pass`. Button disabled; "Complete <title> first". | no |
+| `pending` | Not yet attempted. | no |
+| `checking` | Request in flight. Button disabled with `aria-busy`; stale responses ignored. | no |
+| `pass` | Check passed, or manual step marked done (manual steps have **Undo**). | yes |
+| `fail` | Check ran; the work is not right. Card stays open and shows the hint. | no |
+| `error` | Check could not run. Not a learner failure; never changes an existing `pass`. | no |
+
+Hint order: response `hint`, step `hint`, then "Not done yet."
+
+### Errors
+
+| Cause | HTTP | `error_kind` | Guide message |
+| --- | --- | --- | --- |
+| `fetch()` fails, CORS rejected, or 10 s timeout | none | `verifier_unreachable` | "Verifier isn't running on 127.0.0.1:<VERIFIER_PORT>. Start its `mise` task." |
+| Cluster down, TLS failure | 503 | `cluster_unreachable` | "Can't reach your cluster. Is the VM running?" |
+| Cluster returned 401 | 502 | `auth` | "Cluster rejected the credentials. Issue a new token." |
+| Cluster returned 403 | 502 | `forbidden` | "Verifier lacks permission. Update the ClusterRole." |
+| Unknown lab or step | 404 | `unknown_step` | "Step misconfigured. Tell the lab author." |
+| Invalid `expected` | 422 | `invalid_expected` | Same as above. |
+
+Errors show as a warning banner, distinct from `fail`. `GET /api/health` returns `{ "verifier": "ok", "cluster": "ok" | "cluster_unreachable" | "auth" }` with HTTP 200; it lists one namespace, already allowed. The guide calls it on load and shows cluster status.
+
+### Progress and reset
+
+Progress is stored in `localStorage` key `lab:<lab-id>:progress` as `{ "v": 1, "done": ["<step-id>"] }`. On load the guide re-verifies stored `pass` steps in order. A step that now fails is demoted to `fail` and its dependents become `locked`; an `error` leaves state alone. **Reset lab** clears the key and never touches the cluster; a step's `cleanup` text tells the learner how to undo it.
+
+### Diagram and accessibility
+
+| Rule | Detail |
+| --- | --- |
+| Node attribute | SVG node has `data-step="<diagram_node>"`; `diagram_node` defaults to the step `id`. |
+| Shared nodes | Node is `pass` if all its steps pass, `fail` if any fails, else `pending`. `checking` and `error` never change it. |
+| Missing node | Only the card updates. A node with no step is a lint warning. |
+| Not colour alone | Card and node show a text or icon label ("Passed", "Failed"). |
+| Button | **I did it** is a real `<button>` with a visible focus ring. |
+| Announcements | An `aria-live="polite"` region announces states, hints, and errors. |
+| Node names | Each node has a `<title>` with step title and state. |
+| Layout | WCAG AA contrast; SVG uses `viewBox`; cards and diagram stack on narrow screens. |
 
 ## Verifier rules
 
 - It runs only allow-listed check types: `project_exists`, `resource_exists`, `deployment_ready`, `manual` (client-side only).
-- Parameters come from the step YAML and are validated against the schema. The API never accepts arbitrary `oc` or shell strings, and never shells out.
-- Every check is a read-only `get` or `list` call.
-- CORS: the verifier sends `Access-Control-Allow-Origin` only for `http://localhost:${GUIDE_PORT}`.
-- It binds to `127.0.0.1` only.
+- Parameters are schema-validated. No arbitrary `oc` or shell strings; it never shells out.
+- `resource_exists.kind` must be in the [enumerated allow-list](../labs/schema.md#resource_exists-kinds), checked before any cluster call.
+- Every check is a read-only `get` or `list`.
+- CORS allows only `http://127.0.0.1:${GUIDE_PORT}`.
+- **Both servers bind to `127.0.0.1` only**: the verifier, and the guide via `python -m http.server --bind 127.0.0.1 "$GUIDE_PORT"`.
 
 ## Cluster access
 
@@ -54,9 +92,15 @@ The verifier needs an explicit credential source. It never falls back to `~/.kub
 | Kubeconfig | `KUBECONFIG=<path>` |
 | Token | `SA_TOKEN=<token>` and `API_SERVER_URL=<url>` |
 
-Store credential files under `auth/` or as `kubeconfig*`; both are gitignored. If neither option is set, the verifier exits with an error.
+Issue tokens with TokenRequest, valid at most 8 hours:
 
-A future multi-node IBM Cloud cluster is targeted by pointing the verifier at a different `KUBECONFIG`. No code or guide change is needed.
+```bash
+oc create token lab-verifier -n lab-verifier --duration=8h
+```
+
+Never use legacy long-lived `kubernetes.io/service-account-token` Secrets. Credential files go under `auth/` or `kubeconfig*` (gitignored). With no credentials the verifier exits.
+
+A multi-node IBM Cloud cluster is targeted by changing `KUBECONFIG` only.
 
 ## RBAC
 
@@ -106,7 +150,7 @@ subjects:
     namespace: lab-verifier
 ```
 
-A new resource kind for `resource_exists` requires adding it to this role in the same change.
+Each allow-listed `resource_exists` kind maps to one rule above. A new kind needs a role rule and a schema allow-list entry in the same change.
 
 ## Alternatives rejected
 
