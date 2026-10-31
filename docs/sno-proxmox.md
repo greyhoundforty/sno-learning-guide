@@ -14,6 +14,9 @@ EX280 lab practice.
 - A Red Hat account at [console.redhat.com](https://console.redhat.com) with a
   pull secret downloaded.
 - The Proxmox web UI or SSH access.
+- **OpenShift CLI (`oc`)** installed on your workstation. Download it from
+  [console.redhat.com/openshift/downloads](https://console.redhat.com/openshift/downloads)
+  and place it on your `PATH`. On macOS you can also run `brew install openshift-cli`.
 
 ---
 
@@ -54,6 +57,7 @@ In the Proxmox web UI, create a new VM with these settings:
 
 > **SeaBIOS alternative:** If you cannot use OVMF, SeaBIOS (BIOS mode) also
 > works with the Assisted Installer. UEFI is preferred for SNO.
+>
 > **QEMU Guest Agent:** Not required for SNO installation. Skip it unless you
 > want richer Proxmox integration post-install.
 
@@ -121,10 +125,21 @@ routes resolve automatically:
 # /etc/dnsmasq.d/sno.conf
 address=/api.sno.lab.local/192.168.1.50
 address=/api-int.sno.lab.local/192.168.1.50
-address=/.apps.sno.lab.local/192.168.1.50
+address=/.apps.sno.lab.local/192.168.1.50   # leading dot = all *.apps.sno.lab.local
 ```
 
-Restart `dnsmasq` and confirm with `dig api.sno.lab.local`.
+Restart `dnsmasq`, then verify all three records resolve before proceeding:
+
+```bash
+# Expected output: the node IP on each line
+dig +short api.sno.lab.local
+dig +short api-int.sno.lab.local
+dig +short foo.apps.sno.lab.local   # tests the wildcard
+```
+
+If any command returns no output or a wrong address, re-check `dnsmasq.conf`
+and restart `dnsmasq` before continuing. A DNS misconfiguration will stall the
+installer 40+ minutes into the bootstrap phase.
 
 ---
 
@@ -152,10 +167,10 @@ the VM, collects hardware information, and drives the install from the console.
 3. Fill in the cluster details:
    - **Cluster name:** `<cluster-name>` (e.g. `sno`)
    - **Base domain:** `<base-domain>` (e.g. `lab.local`)
-   - **OpenShift version:** select **4.22** (or the newest version in the
-     dropdown that matches the EX280 exam objectives — check the current
-     [EX280 exam page](https://www.redhat.com/en/services/training/ex280) to
-     confirm the exam version).
+   - **OpenShift version:** select **4.22**. If 4.22 is not in the dropdown,
+     select the highest available **4.22.x** build. If no 4.22 build is listed
+     at all, select the highest available 4.x version and follow the fallback
+     procedure in §7 to confirm what was installed.
    - **Host inventory:** choose **Single node OpenShift (SNO)**.
 4. Paste your pull secret when prompted.
 5. Configure SSH public key (optional but useful for node debugging).
@@ -181,8 +196,16 @@ the VM, collects hardware information, and drives the install from the console.
 1. Start the VM in Proxmox.
 2. Watch the console (SPICE/VNC) — the discovery image boots, runs a minimal
    Linux environment, and phones home to the Assisted Installer.
-3. Return to the Assisted Installer — within a few minutes the host should
+3. Return to the Assisted Installer — within **3–8 minutes** the host should
    appear under **Host inventory** with status **Ready** or **Known**.
+
+> **Console activity:** while the discovery image is running you will see log
+> lines scrolling in the VM console as it contacts the Assisted Installer.
+> This is normal. If the console goes quiet with no activity after 5 minutes
+> and the host has not appeared, SSH into the node
+> (`ssh core@<node-ip-address>`) and run `journalctl -u agent -f` to watch
+> the registration attempt. The most common cause is a firewall blocking
+> outbound HTTPS to `api.openshift.com` (port 443).
 
 ### 4.6 Set the installation disk
 
@@ -202,18 +225,41 @@ the VM, collects hardware information, and drives the install from the console.
 > **Tip:** The VM console will reboot part-way through. After reboot the node
 > continues the install from the local disk; the discovery ISO is no longer
 > needed.
+>
+> **After installation:** remove the discovery ISO from the CD/DVD drive or
+> change the boot order to **disk first** in the VM hardware settings. If the
+> ISO stays as the first boot device, the node will boot back into the
+> discovery image on every future restart.
 
 ---
 
 ## 5. Post-Install: Credentials and KUBECONFIG
 
+### 5.0 Wait for cluster operators
+
+Installation "completes" when the progress bar reaches 100 %, but on a
+resource-constrained node some cluster operators may still be converging. Check
+operator status before downloading credentials:
+
+```bash
+oc get clusteroperators
+```
+
+Expected output: all operators show `AVAILABLE=True`, `PROGRESSING=False`,
+`DEGRADED=False`. If any operator shows `PROGRESSING=True`, wait 5–10 minutes
+and re-run. This is normal on 32 GB RAM nodes and does not indicate a failed
+install. Once `oc get clusterversion` shows `PROGRESSING=False`, the cluster
+is fully ready.
+
 ### 5.1 Retrieve kubeadmin credentials
 
-At the end of the installation the Assisted Installer console shows a
-**`kubeadmin` password**. This is the only time it is shown in the console.
+At the end of the installation the Assisted Installer console shows the
+**`kubeadmin` password** in the cluster detail page under **Credentials**.
 
 - Store it immediately in a **password manager** (e.g. 1Password, Bitwarden,
   macOS Keychain).
+- You can retrieve it again from the Assisted Installer console as long as the
+  cluster record has not been deleted — but do not rely on this; store it now.
 - **Never** write it into a file in this repository, a shell variable export,
   or a `.env` file that could be committed.
 
@@ -271,11 +317,19 @@ export KUBECONFIG="$HOME/sno-learning-guide/auth/kubeconfig"
 Taking a snapshot immediately after a clean install lets you reset the lab
 environment quickly without re-running the full installer.
 
-1. In the Proxmox web UI, select the SNO VM.
-2. Navigate to **Snapshots** → **Take Snapshot**.
-3. Name it `post-install-clean` (or similar).
-4. Leave **Include RAM** unchecked (the VM should be powered off or suspended
-   first for a consistent snapshot).
+1. Shut down the node cleanly before snapshotting to avoid etcd corruption:
+
+   ```bash
+   ssh core@<node-ip-address> sudo shutdown -h now
+   ```
+
+   Alternatively, use **Stop** (not **Force Stop**) in the Proxmox web UI.
+   Wait for the VM status to show **stopped** before continuing.
+
+2. In the Proxmox web UI, select the SNO VM.
+3. Navigate to **Snapshots** → **Take Snapshot**.
+4. Name it `post-install-clean` (or similar).
+5. Leave **Include RAM** unchecked (the VM is stopped).
 
 > **Lab reset workflow:** Revert to `post-install-clean`, start the VM, wait
 > for the cluster to stabilize (all operators ready), then run your lab.
@@ -307,11 +361,11 @@ If the Assisted Installer did not offer 4.22, select the highest available
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Host not appearing in Assisted Installer | Network/firewall | Ensure the VM can reach `api.openshift.com` |
-| Install stalls at bootstrap | DNS misconfigured | Confirm `api.<cluster>.<domain>` resolves to the node IP |
-| `oc` command not found | OpenShift CLI not installed | Download `oc` from console.redhat.com/openshift/downloads |
-| `oc login` fails | Wrong API URL | Use `https://api.<cluster-name>.<base-domain>` (port 6443) |
-| Operators degraded after boot | Slow node start | Wait 10–15 min; run `oc get clusteroperators` to check |
+| Host not appearing in Assisted Installer | Network/firewall | Ensure the VM can reach `api.openshift.com`. From the VM console, `ssh core@<node-ip-address>`, then run `journalctl -u agent -f` to see registration errors |
+| Install stalls at bootstrap | DNS misconfigured | Confirm `api.<cluster>.<domain>` resolves to the node IP with `dig +short api.<cluster>.<domain>` |
+| `oc` command not found | OpenShift CLI not installed | Download `oc` from [console.redhat.com/openshift/downloads](https://console.redhat.com/openshift/downloads) or run `brew install openshift-cli` |
+| `oc login` fails | Wrong API URL or port | Use `https://api.<cluster-name>.<base-domain>` with port 6443 (the API server listens on port 6443) |
+| Operators degraded after boot | Slow node start | Wait 10–15 min; run `oc get clusteroperators` to check; `PROGRESSING=True` is normal during convergence |
 
 ---
 
@@ -320,16 +374,20 @@ If the Assisted Installer did not offer 4.22, select the highest available
 The following `mise` tasks are **planned** for this project. They are
 documented here as a checklist; implementation is a separate backlog item.
 
+- [ ] `guide:serve` — start the guide static server on port 8080.
+- [ ] `verifier:serve` — start the verifier API on port 8081.
 - [ ] `cluster:login` — authenticate to the cluster using `KUBECONFIG` and
   verify connectivity with `oc whoami`.
+- [ ] `lab:reset <n>` — revert the lab environment to the clean snapshot for
+  lab number `<n>`.
+
+The following tasks are additional cluster helpers (**optional extras**, not
+yet in the backlog — add them when the mise-tasks item is picked up):
+
 - [ ] `cluster:status` — run `oc get clusterversion` and
   `oc get clusteroperators` and surface a summary.
 - [ ] `cluster:snapshot` — trigger a Proxmox snapshot of the SNO VM via the
   Proxmox API.
-- [ ] `cluster:reset` — revert the SNO VM to the `post-install-clean` snapshot
-  via the Proxmox API.
-- [ ] `lab:serve` — start the guide static server on port 8080.
-- [ ] `lab:verify` — start the verifier API on port 8081.
 
 See [`mise.toml`](../mise.toml) for the currently implemented tasks.
 
@@ -338,6 +396,8 @@ See [`mise.toml`](../mise.toml) for the currently implemented tasks.
 ## Reference Links
 
 - [Red Hat Assisted Installer](https://console.redhat.com/openshift/assisted-installer/clusters)
-- [SNO install docs (Red Hat)](https://docs.redhat.com/en/documentation/openshift_container_platform/4.13/html/installing_on_a_single_node/install-sno-installing-sno)
+- [SNO install docs (Red Hat)][sno-docs] — 4.13 docs; update link to 4.22 once published
 - [EX280 exam objectives](https://www.redhat.com/en/services/training/ex280)
 - [OpenShift CLI download](https://console.redhat.com/openshift/downloads)
+
+[sno-docs]: https://docs.redhat.com/en/documentation/openshift_container_platform/4.13/html/installing_on_a_single_node/install-sno-installing-sno
