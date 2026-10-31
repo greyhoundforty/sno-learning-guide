@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Factory board</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#f4f4f4; --card:#fff; --line:#e0e0e0; --text:#161616; --mute:#525252; --ok:#198038; --bad:#da1e28; --pend:#8d8d8d; --hum:#ff832b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 "IBM Plex Sans",system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 24px; background:#161616; color:#fff; display:flex; justify-content:space-between; }
+  header small { color:#c6c6c6; }
+  main { display:grid; grid-template-columns:repeat(6,minmax(170px,1fr)); gap:12px; padding:16px; overflow-x:auto; }
+  .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--mute); margin:0 0 8px; }
+  .card { background:var(--card); border:1px solid var(--line); padding:10px; margin-bottom:8px; cursor:pointer; }
+  .card:hover { border-color:#0f62fe; }
+  .card.needs-human { border:2px solid var(--hum); }
+  .id { font-weight:600; }
+  .meta { color:var(--mute); font-size:12px; }
+  .chips { display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; }
+  .chip { font-size:11px; padding:1px 6px; color:#fff; background:var(--pend); }
+  .chip.PASS { background:var(--ok); } .chip.CHANGES { background:var(--bad); }
+  #viewer { margin:0 16px 24px; background:var(--card); border:1px solid var(--line); padding:16px; display:none; }
+  #viewer pre { white-space:pre-wrap; margin:0; }
+  #viewer nav button { margin:0 4px 8px 0; padding:4px 10px; border:1px solid var(--line); background:#f4f4f4; cursor:pointer; }
+</style>
+</head>
+<body>
+<header><strong>Factory board</strong><small id="ts">loading…</small></header>
+<main id="board"></main>
+<section id="viewer"><nav id="files"></nav><pre id="content"></pre></section>
+<script>
+const STAGES = ["spec","build","review","approve","needs-human","done"];
+const KINDS = ["security","ux","ui","code"];
+const FILES = ["spec.md","build.md","decision.md",
+  ...[1,2,3].flatMap(r => KINDS.map(k => `round-${r}/review-${k}.md`))];
+
+async function load() {
+  try {
+    const res = await fetch("board.json", {cache:"no-store"});
+    const data = await res.json();
+    render(data.jobs || []);
+    document.getElementById("ts").textContent = "updated " + new Date().toLocaleTimeString();
+  } catch (e) { document.getElementById("ts").textContent = "board.json unavailable"; }
+}
+
+function render(jobs) {
+  const board = document.getElementById("board");
+  board.replaceChildren();
+  for (const stage of STAGES) {
+    const col = document.createElement("div");
+    col.className = "col";
+    const h = document.createElement("h2"); h.textContent = stage; col.append(h);
+    for (const job of jobs.filter(j => j.stage === stage)) col.append(card(job));
+    board.append(col);
+  }
+}
+
+function card(job) {
+  const el = document.createElement("div");
+  el.className = "card" + (job.stage === "needs-human" ? " needs-human" : "");
+  const id = document.createElement("div"); id.className = "id"; id.textContent = job.id;
+  const meta = document.createElement("div"); meta.className = "meta"; meta.textContent = `round ${job.round || 0}`;
+  el.append(id, meta);
+  if (job.reviews) {
+    const chips = document.createElement("div"); chips.className = "chips";
+    for (const k of KINDS) {
+      const v = job.reviews[k] || "pending";
+      const c = document.createElement("span"); c.className = "chip " + v; c.textContent = `${k}: ${v}`;
+      chips.append(c);
+    }
+    el.append(chips);
+  }
+  el.onclick = () => openJob(job.id);
+  return el;
+}
+
+async function openJob(id) {
+  const viewer = document.getElementById("viewer"), nav = document.getElementById("files"), out = document.getElementById("content");
+  viewer.style.display = "block"; nav.replaceChildren(); out.textContent = "";
+  for (const f of FILES) {
+    const r = await fetch(`jobs/${id}/${f}`);
+    if (!r.ok) continue;
+    const text = await r.text();
+    const b = document.createElement("button"); b.textContent = f;
+    b.onclick = () => { out.textContent = text; };
+    nav.append(b);
+    if (!out.textContent) out.textContent = text;
+  }
+}
+
+load(); setInterval(load, 3000);
+</script>
+</body>
+</html>

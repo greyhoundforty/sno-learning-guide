@@ -1,0 +1,15 @@
+# Secrets and cluster credentials - never commit
+kubeconfig*
+*.kubeconfig
+auth/
+pull-secret*
+*.pem
+*.key
+.env
+.env.*
+
+# Local
+.DS_Store
+__pycache__/
+.venv/
+node_modules/

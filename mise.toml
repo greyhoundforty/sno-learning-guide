@@ -1,0 +1,7 @@
+[tools]
+python = "3"
+
+[tasks."factory:dashboard"]
+description = "Serve the factory dashboard at http://localhost:8000/dashboard.html"
+dir = "factory"
+run = "python3 -m http.server 8000"
