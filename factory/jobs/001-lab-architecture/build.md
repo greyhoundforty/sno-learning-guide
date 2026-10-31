@@ -39,7 +39,7 @@ Commit `daa5a91` (docs only: `docs/architecture.md`, `labs/schema.md`).
 
 Fixes per review item:
 
-- **Code B1 / UX #1 / Security F-none:** Added a distinct `error` outcome (`status: pass|fail|error`, `error_kind`) with an Errors table (verifier unreachable, cluster unreachable, 401, 403, unknown step, invalid `expected`) giving HTTP code and guide message for each. Added `GET /api/health`. Added a step-state table (`locked`, `pending`, `checking`, `pass`, `fail`, `error`; persisted: `pass`) including the manual states (Undo) and hint order.
+- **Code B1 / UX #1:** Added a distinct `error` outcome (`status: pass|fail|error`, `error_kind`) with an Errors table (verifier unreachable, cluster unreachable, 401, 403, unknown step, invalid `expected`) giving HTTP code and guide message for each. Added `GET /api/health`. Added a step-state table (`locked`, `pending`, `checking`, `pass`, `fail`, `error`; persisted: `pass`) including the manual states (Undo) and hint order.
 - **Code B2 / UX #7:** Added a lab wrapper (`id`, `title`, `steps`), list-order rule, and optional `requires` (default previous step; must reference earlier steps). Route is now `POST /api/verify/<lab-id>/<step-id>`.
 - **Code B3 / S1 / UX #8:** Added a "Progress and reset" section: `localStorage` key `lab:<lab-id>:progress` with a version field, **Reset lab**, re-verify on load with demotion and dependent locking, and an optional `cleanup` field (text only).
 - **Code S2 / S3:** Hint precedence stated; `checking` state disables the button, 10 s timeout maps to `verifier_unreachable`.
