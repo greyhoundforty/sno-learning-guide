@@ -16,13 +16,13 @@ A lab is one YAML file: a lab-level wrapper holding an ordered list of steps. Th
 | --- | --- | --- | --- | --- |
 | `id` | string (slug) | yes | Unique within the lab. Lowercase letters, digits, hyphens. Used in `POST /api/verify/<lab-id>/<step-id>`. | `create-project` |
 | `title` | string | yes | Short heading shown on the step card. | `Create the demo project` |
-| `instructions` | markdown string | yes | What the learner does. Commands go in fenced code blocks. | `Run \`oc new-project demo\`.` |
+| `instructions` | markdown string | yes | What the learner does. Commands go in fenced code blocks. | ``Run `oc new-project demo`.`` |
 | `check_type` | enum | yes | Which check the verifier runs. One of the values below. | `project_exists` |
 | `expected` | map | yes | Parameters for the check; shape depends on `check_type`. Use `{}` for `manual`. | `{ name: demo }` |
 | `requires` | list of step id | no | Steps that must be `pass` first. Defaults to the previous step; `[]` means none. | `[create-project]` |
 | `diagram_node` | string | no | Value of the SVG `data-step` attribute to update. Defaults to `id`. | `app` |
 | `hint` | string | no | Shown on `fail` when the response has no hint. | `Did you run oc new-project?` |
-| `cleanup` | markdown string | no | Text telling the learner how to undo the step. Never executed. | `Run \`oc delete project demo\`.` |
+| `cleanup` | markdown string | no | Text telling the learner how to undo the step. Never executed. | ``Run `oc delete project demo`.`` |
 
 Rules:
 
