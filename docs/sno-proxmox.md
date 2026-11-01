@@ -235,22 +235,6 @@ the VM, collects hardware information, and drives the install from the console.
 
 ## 5. Post-Install: Credentials and KUBECONFIG
 
-### 5.0 Wait for cluster operators
-
-Installation "completes" when the progress bar reaches 100 %, but on a
-resource-constrained node some cluster operators may still be converging. Check
-operator status before downloading credentials:
-
-```bash
-oc get clusteroperators
-```
-
-Expected output: all operators show `AVAILABLE=True`, `PROGRESSING=False`,
-`DEGRADED=False`. If any operator shows `PROGRESSING=True`, wait 5–10 minutes
-and re-run. This is normal on 32 GB RAM nodes and does not indicate a failed
-install. Once `oc get clusterversion` shows `PROGRESSING=False`, the cluster
-is fully ready.
-
 ### 5.1 Retrieve kubeadmin credentials
 
 At the end of the installation the Assisted Installer console shows the
@@ -300,7 +284,23 @@ At the end of the installation the Assisted Installer console shows the
 
    The output should show the installed version (e.g. `4.22.x`).
 
-### 5.3 Persist KUBECONFIG across sessions
+### 5.3 Wait for cluster operators
+
+Installation "completes" when the progress bar reaches 100 %, but on a
+resource-constrained node some cluster operators may still be converging. Check
+operator status (this needs the `KUBECONFIG` from step 5.2):
+
+```bash
+oc get clusteroperators
+```
+
+Expected output: all operators show `AVAILABLE=True`, `PROGRESSING=False`,
+`DEGRADED=False`. If any operator shows `PROGRESSING=True`, wait 5–10 minutes
+and re-run. This is normal on 32 GB RAM nodes and does not indicate a failed
+install. Once `oc get clusterversion` shows `PROGRESSING=False`, the cluster
+is fully ready.
+
+### 5.4 Persist KUBECONFIG across sessions
 
 Add the export to your shell profile (`.zshrc`, `.bashrc`) or to a local
 `.env` file (gitignored):
