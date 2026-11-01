@@ -11,6 +11,18 @@
         "ui": "PASS",
         "code": "PASS"
       }
+    },
+    {
+      "id": "002-sno-proxmox-runbook",
+      "branch": "factory/002-sno-proxmox-runbook",
+      "stage": "done",
+      "round": 2,
+      "reviews": {
+        "security": "PASS",
+        "ux": "PASS",
+        "ui": "PASS",
+        "code": "PASS"
+      }
     }
   ]
 }
